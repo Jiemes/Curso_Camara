@@ -19,9 +19,9 @@ Se puede trabajar con este caso o adaptar los ejercicios a un negocio propio. En
 
 ## Guion del asistente animado
 
-La primera propuesta de personaje es **un señalador de cuaderno animado**. Tiene una silueta vertical azul petróleo, un corte en V y una cara sencilla. Puede inclinarse como si se asomara al borde de la actividad. El corte y la silueta deben reconocerse en tamaño chico, tanto en el aula como en el catálogo. En esta etapa, el texto visible es **Tu guía**.
+El personaje es una persona ilustrada que acompaña como docente y guía. Tiene lentes, un cuaderno y ropa de tonos azul petróleo. Saluda, señala y asiente. Mientras habla, su boca acompaña la voz con una animación breve. El texto visible que identifica al personaje es **Tu guía**.
 
-Una misma colección de gestos sirve para todos los cursos. El docente escribe el contenido de cada aparición y elige el gesto. El alumno puede abrir, cerrar u ocultar al asistente. Cada gesto se reproduce una vez por intervención y la ayuda se mantiene disponible en texto con movimiento reducido. [W3C sobre animación y accesibilidad](https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions)
+Una misma colección de gestos sirve para todos los cursos. El docente escribe el contenido de cada aparición y elige el gesto. El alumno puede abrir, cerrar u ocultar al asistente. El alumno elige **solo voz** o **solo texto**. En modo voz se oculta el mensaje escrito del acompañante para liberar espacio. Al silenciar, aparece el texto de la misma intervención. Puede repetir la ayuda, detener el audio, elegir una voz en español y reducir el movimiento. La voz comienza al activarla con un botón y se detiene al cerrar la ayuda, cambiar de pantalla o salir del aula. Si el navegador no reproduce audio, la intervención aparece en texto. [W3C sobre animación y accesibilidad](https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions)
 
 | Gesto | Cuándo aparece | Qué hace el personaje |
 | --- | --- | --- |

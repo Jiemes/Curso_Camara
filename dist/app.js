@@ -15,9 +15,27 @@
   const draft = id => state.drafts[id] || {};
   const courseProgress = course => course.classes.filter(isComplete).length;
   const minutes = course => course.classes.reduce((sum, id) => sum + lessons[id - 1].duration, 0);
+  const guideMessages = {};
+  let voiceReady = false;
+  let voiceStatus = 'idle';
+  let voiceError = '';
+  const narrator = window.createAulaNarrator({
+    onStatus(status) {
+      voiceStatus = status;
+      root.querySelectorAll('.mascot').forEach(node => node.classList.toggle('is-speaking', status === 'speaking'));
+      updateAudioControls();
+    },
+    onError(message) {
+      voiceError = message;
+      voiceReady = false;
+      updateAudioControls();
+      toast(message);
+    },
+    onVoices() { updateVoiceOptions(); }
+  });
 
   function load(ignoreSaved = false) {
-    const fallback = { completed: [], drafts: {}, notes: {}, queries: [], hints: {}, guideOpen: true, guideVisible: true, reduceMotion: false, lastLesson: 1, order: ['details', 'button', 'title', 'offer'], rules: { pedido: 'Ventas', consulta: 'Atención' } };
+    const fallback = { completed: [], drafts: {}, notes: {}, queries: [], hints: {}, guideOpen: true, guideVisible: true, reduceMotion: false, voiceEnabled: false, voiceModeChosen: false, voiceURI: '', voiceRate: 0.96, lastLesson: 1, order: ['details', 'button', 'title', 'offer'], rules: { pedido: 'Ventas', consulta: 'Atención' } };
     if (ignoreSaved) return fallback;
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
@@ -49,7 +67,75 @@
   }
 
   function mascot(size = '', gesture = '') {
-    return `<span class="mascot" ${size ? `style="--size:${size}px"` : ''} ${gesture ? `data-gesture="${gesture}"` : ''} aria-hidden="true"><span class="mascot-arm"></span><span class="mascot-arm right"></span><span class="mascot-body"></span><span class="mascot-fold"></span><span class="mascot-eyes"></span><span class="mascot-mouth"></span></span>`;
+    return `<span class="mascot instructor" ${size ? `style="--size:${size}px"` : ''} ${gesture ? `data-gesture="${gesture}"` : ''} aria-hidden="true"><span class="tutor-torso"><span class="tutor-shirt"></span><span class="tutor-lapel left"></span><span class="tutor-lapel right"></span></span><span class="tutor-neck"></span><span class="tutor-ear left"></span><span class="tutor-ear right"></span><span class="tutor-head"><span class="tutor-hair"></span><span class="tutor-brow left"></span><span class="tutor-brow right"></span><span class="tutor-glasses left"><span></span></span><span class="tutor-glasses right"><span></span></span><span class="tutor-bridge"></span><span class="tutor-nose"></span><span class="tutor-mouth"></span></span><span class="tutor-arm"><span class="tutor-hand"></span></span><span class="tutor-book"><span></span></span></span>`;
+  }
+
+  function audioBar() {
+    return `<div class="audio-bar" aria-label="Voz del acompañante"><span class="audio-status">Solo texto</span><button class="audio-toggle" data-action="voice-toggle" aria-pressed="false" ${narrator.supported ? '' : 'disabled'}>Activar voz</button><button class="audio-stop" data-action="voice-stop" hidden>Detener audio</button></div>`;
+  }
+
+  function voiceWelcome() {
+    if (state.voiceModeChosen) return '';
+    return `<section class="voice-welcome" aria-labelledby="voice-welcome-title"><div><h2 id="voice-welcome-title">¿Cómo querés que te acompañe?</h2><p>Elegí escuchar a Tu guía o leer sus intervenciones. Podés cambiar de modo cuando quieras.</p></div><div class="button-row"><button class="button primary" data-action="voice-start" ${narrator.supported ? '' : 'disabled'}>Solo voz</button><button class="button" data-action="voice-text">Solo texto</button></div></section>`;
+  }
+
+  function updateAudioControls() {
+    const enabled = state.voiceEnabled && voiceReady;
+    const playing = voiceStatus !== 'idle';
+    const toggle = $('.audio-toggle');
+    if (toggle) {
+      toggle.textContent = enabled ? 'Silenciar voz' : state.voiceEnabled ? 'Continuar con voz' : 'Activar voz';
+      toggle.setAttribute('aria-pressed', String(Boolean(enabled)));
+    }
+    const status = $('.audio-status');
+    if (status) status.textContent = voiceStatus === 'speaking' ? 'Hablando…' : playing ? 'Preparando voz…' : enabled ? 'Modo voz' : 'Solo texto';
+    const stop = $('.audio-stop');
+    if (stop) stop.hidden = !playing;
+    for (const message of root.querySelectorAll('#guide-message, #home-guide-message')) {
+      message.setAttribute('aria-live', enabled ? 'off' : 'polite');
+      message.hidden = Boolean(enabled && !voiceError);
+    }
+    $('.guide')?.classList.toggle('voice-mode', Boolean(enabled && !voiceError));
+    const repeat = $('[data-action="voice-repeat"]');
+    if (repeat) repeat.textContent = enabled ? 'Repetir ayuda' : 'Escuchar esta ayuda';
+    const problem = $('#voice-problem');
+    if (problem) {
+      problem.textContent = voiceError || (!narrator.supported ? 'Este navegador ofrece el acompañamiento en texto. La voz está disponible en navegadores compatibles.' : '');
+      problem.hidden = !problem.textContent;
+    }
+  }
+
+  function updateVoiceOptions() {
+    const select = $('#voice-choice');
+    if (!select) return;
+    const available = narrator.voices();
+    select.innerHTML = '<option value="">Automática en español</option>' + available.map(voice => `<option value="${escape(voice.voiceURI)}" ${voice.voiceURI === state.voiceURI ? 'selected' : ''}>${escape(voice.name)} · ${escape(voice.lang)}</option>`).join('');
+  }
+
+  function speakText(text) {
+    if (!state.voiceEnabled || !voiceReady || document.hidden) return;
+    voiceError = '';
+    narrator.speak(text, { voiceURI: state.voiceURI, rate: state.voiceRate });
+    updateAudioControls();
+  }
+
+  function enableVoice(message) {
+    state.voiceEnabled = true;
+    state.voiceModeChosen = true;
+    voiceReady = true;
+    state.guideOpen = true;
+    save();
+    render();
+    speakText(message || $('#guide-message')?.textContent || $('#home-guide-message')?.textContent || 'Hola, soy Tu guía. Voy a acompañarte paso a paso. Elegí un curso y empecemos. Podés silenciarme para leer la ayuda.');
+  }
+
+  function textOnly() {
+    narrator.stop();
+    state.voiceEnabled = false;
+    state.voiceModeChosen = true;
+    voiceReady = false;
+    save();
+    render();
   }
 
   function art(theme) {
@@ -59,7 +145,7 @@
 
   function frame(content, page = 'home', lesson = false) {
     const nav = [ ['home', '#', '⌂', 'Mis cursos'], ['notes', '#notes', '▤', 'Mis apuntes'], ['settings', '#settings', '⚙', 'Preferencias'] ];
-    return `<div class="shell"><aside class="sidebar"><a class="brand" href="#" aria-label="Aula, inicio"><span class="brand-mark" aria-hidden="true"></span>aula<span style="color:#8c9f6d">.</span></a><nav class="side-nav" aria-label="Principal">${nav.map(([name, href, icon, label]) => `<a href="${href}" ${page === name ? 'aria-current="page"' : ''} aria-label="${label}"><span class="nav-icon" aria-hidden="true">${icon}</span><span class="nav-label">${label}</span></a>`).join('')}</nav><div class="side-bottom"><p>Un paso más para<br>lo que querés hacer.</p><p class="fine-line">Formación para comercios<br>Mercedes, Buenos Aires</p><p>Versión de prueba</p></div></aside><div class="main-shell"><header class="topbar"><p><strong>Tu espacio de aprendizaje</strong><span class="responsive-name">IA, comunicación y tecnología</span></p><span class="pill">Avance en este dispositivo</span></header>${!storageAvailable ? '<p class="storage-warning" role="status">El guardado local no está disponible. Exportá tus entregas desde Mis apuntes antes de salir.</p>' : ''}<main id="main" ${lesson ? '' : 'class="page"'}>${content}</main></div></div>`;
+    return `<div class="shell"><aside class="sidebar"><a class="brand" href="#" aria-label="Aula, inicio"><span class="brand-mark" aria-hidden="true"></span>aula<span style="color:#8c9f6d">.</span></a><nav class="side-nav" aria-label="Principal">${nav.map(([name, href, icon, label]) => `<a href="${href}" ${page === name ? 'aria-current="page"' : ''} aria-label="${label}"><span class="nav-icon" aria-hidden="true">${icon}</span><span class="nav-label">${label}</span></a>`).join('')}</nav><div class="side-bottom"><p>Un paso más para<br>lo que querés hacer.</p><p class="fine-line">Formación para comercios<br>Mercedes, Buenos Aires</p><p>Versión de prueba</p></div></aside><div class="main-shell"><header class="topbar"><p><strong>Tu espacio de aprendizaje</strong><span class="responsive-name">IA, comunicación y tecnología</span></p>${audioBar()}<span class="pill">Avance en este dispositivo</span></header><p id="voice-problem" class="voice-problem" role="status" hidden></p>${!storageAvailable ? '<p class="storage-warning" role="status">El guardado local no está disponible. Exportá tus entregas desde Mis apuntes antes de salir.</p>' : ''}<main id="main" ${lesson ? '' : 'class="page"'}>${content}</main></div></div>`;
   }
 
   function courseCard(course) {
@@ -71,7 +157,7 @@
     const id = Math.max(1, Math.min(12, Number(state.lastLesson) || 1));
     const resume = state.completed.length > 0 || Object.keys(state.drafts).length > 0;
     const nextId = isComplete(id) ? lessons.find(lesson => !isComplete(lesson.id))?.id || id : id;
-    return frame(`<div class="heading-row"><div><p class="eyebrow">Aprendizaje a tu ritmo</p><h1 class="page-title">Aprendé para tu negocio.</h1><p class="lead">Cursos cortos, práctica real y una guía que te acompaña.</p></div></div><section class="hero" aria-labelledby="welcome-title"><div class="hero-copy"><p class="eyebrow">${resume ? 'Seguí donde quedaste' : 'Tu primer curso'}</p><h2 id="welcome-title">${resume ? escape(lessons[nextId - 1].title) : 'Una idea, un borrador.<br>Y tu criterio para revisarlo.'}</h2><p>${resume ? escape(courseFor(nextId).title) : 'Usá la IA para preparar mensajes que le sirvan a tu equipo y a tus clientes.'}</p><a class="button light" href="#lesson/${nextId}/read">${resume ? 'Continuar mi clase' : 'Empezar con IA'}<span class="arrow" aria-hidden="true">→</span></a></div><div class="hero-art"><span class="mascot-shadow"></span>${mascot('', 'hello')}</div></section><section class="course-section" aria-labelledby="courses-title"><div class="heading-row"><h2 id="courses-title">Tus cursos</h2><p class="subtle">${state.completed.length} de 12 clases completadas</p></div><div class="course-grid">${courses.map(courseCard).join('')}</div></section><div class="dashboard-foot"><span>Elegí un curso o seguí el recorrido completo.</span><span>Las prácticas se guardan en este navegador.</span></div>`, 'home');
+    return frame(`<div class="heading-row"><div><p class="eyebrow">Aprendizaje a tu ritmo</p><h1 class="page-title">Aprendé para tu negocio.</h1><p class="lead">Cursos cortos, práctica real y una guía que te acompaña.</p></div></div><section class="hero" aria-labelledby="welcome-title"><div class="hero-copy"><p class="eyebrow">${resume ? 'Seguí donde quedaste' : 'Tu primer curso'}</p><h2 id="welcome-title">${resume ? escape(lessons[nextId - 1].title) : 'Una idea, un borrador.<br>Y tu criterio para revisarlo.'}</h2><p id="home-guide-message">${resume ? 'Hola. ¿Seguimos con tu curso? Te acompaño con una explicación o una pista cada vez que lo necesites.' : 'Hola, soy Tu guía. Vamos a aprender paso a paso. Elegí un curso y empecemos. Si te trabás, puedo darte una pista o un ejemplo.'}</p><a class="button light" href="#lesson/${nextId}/read">${resume ? 'Continuar mi clase' : 'Empezar con IA'}<span class="arrow" aria-hidden="true">→</span></a></div><div class="hero-art"><span class="mascot-shadow"></span>${mascot('', 'hello')}</div></section>${voiceWelcome()}<section class="course-section" aria-labelledby="courses-title"><div class="heading-row"><h2 id="courses-title">Tus cursos</h2><p class="subtle">${state.completed.length} de 12 clases completadas</p></div><div class="course-grid">${courses.map(courseCard).join('')}</div></section><div class="dashboard-foot"><span>Elegí un curso o seguí el recorrido completo.</span><span>Las prácticas se guardan en este navegador.</span></div>`, 'home');
   }
 
   function coursePage(course) {
@@ -104,7 +190,7 @@
     if (!state.guideVisible) return '<button class="button small" data-action="show-guide">Mostrar a Tu guía</button>';
     const open = state.guideOpen;
     const hints = Math.min(state.hints[lesson.id] || 0, 2);
-    return `<aside class="guide ${open ? '' : 'closed'}" aria-label="Tu guía, acompañante virtual"><div class="guide-top">${mascot('', 'hello')}<div><strong>Tu guía</strong><small>Acompañante virtual</small></div><button class="close-guide" data-action="toggle-guide" aria-expanded="${open}" aria-controls="guide-body" aria-label="${open ? 'Cerrar ayuda' : 'Abrir ayuda'}">${open ? '−' : '+'}</button></div><div id="guide-body" ${open ? '' : 'hidden'}><p id="guide-message" aria-live="polite">${escape(lesson.guidance[hints])}</p><div class="guide-action"><button data-action="hint">${['Dame una pista', 'Dame otra pista', 'Repasar la pista'][hints]}</button><button data-action="explain">Explicame la actividad</button><button data-action="example">Ver un ejemplo</button></div><p class="disabled-note" style="margin-top:13px">Ayudas preparadas para esta clase.</p></div></aside>`;
+    return `<aside class="guide ${open ? '' : 'closed'}" aria-label="Tu guía, acompañante virtual"><div class="guide-top">${mascot('', 'hello')}<div><strong>Tu guía</strong><small>Guía de aprendizaje</small></div><button class="close-guide" data-action="toggle-guide" aria-expanded="${open}" aria-controls="guide-body" aria-label="${open ? 'Cerrar ayuda' : 'Abrir ayuda'}">${open ? '−' : '+'}</button></div><div id="guide-body" ${open ? '' : 'hidden'}><p id="guide-message" aria-live="polite">${escape(guideMessages[lesson.id] || lesson.guidance[hints])}</p><div class="guide-listen"><button data-action="voice-repeat" ${narrator.supported ? '' : 'disabled'}>Escuchar esta ayuda</button></div><div class="guide-action"><button data-action="hint">${['Dame una pista', 'Dame otra pista', 'Repasar la pista'][hints]}</button><button data-action="explain">Explicame la actividad</button><button data-action="example">Ver un ejemplo</button></div></div></aside>`;
   }
 
   function lessonPage(lesson, tab = 'read') {
@@ -112,7 +198,7 @@
     const localIndex = course.classes.indexOf(lesson.id);
     const tabs = [['read', 'La clase'], ['practice', 'A practicar'], ['notes', 'Mis notas']];
     const options = course.classes.map(id => `<option value="${id}" ${id === lesson.id ? 'selected' : ''}>${course.classes.indexOf(id) + 1}. ${escape(lessons[id - 1].title)}</option>`).join('');
-    return frame(`<div class="lesson-shell"><nav class="syllabus" aria-label="Clases del curso"><a class="back-link" href="#course/${course.id}">← Volver al curso</a><p class="eyebrow">Tu recorrido</p><h2>${escape(course.title)}</h2><p class="subtle">${courseProgress(course)} de ${course.classes.length} completadas</p><div class="progress-track" aria-hidden="true"><div class="progress-fill" style="width:${courseProgress(course) / course.classes.length * 100}%"></div></div>${course.classes.map((id, i) => `<a href="#lesson/${id}/read" class="${id === lesson.id ? 'active' : ''}" ${id === lesson.id ? 'aria-current="step"' : ''}><span class="step-dot">${isComplete(id) ? '✓' : i + 1}</span><span>${escape(lessons[id - 1].title)}</span></a>`).join('')}</nav><div class="lesson-main"><select class="mobile-course-picker" aria-label="Cambiar de clase">${options}</select><header class="lesson-heading"><p class="eyebrow">${escape(course.label)} · Clase ${localIndex + 1} de ${course.classes.length}</p><h1>${escape(lesson.title)}</h1><p class="lesson-objective">${escape(lesson.objective)}</p><div class="lesson-tools"><span>◷ ${lesson.duration} minutos estimados</span><span>${isComplete(lesson.id) ? '✓ Práctica completada' : 'A tu ritmo'}</span></div></header><div class="lesson-tabs" role="tablist" aria-label="Contenido de la clase">${tabs.map(([id, label]) => `<button role="tab" id="tab-${id}" aria-selected="${id === tab}" aria-controls="lesson-panel" data-tab="${id}" tabindex="${id === tab ? '0' : '-1'}">${label}</button>`).join('')}</div><div class="lesson-columns"><section class="lesson-content" id="lesson-panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === 'read' ? `<div class="prose">${markdown(lesson.content)}</div><div class="button-row"><a class="button primary" href="#lesson/${lesson.id}/practice">Ir a la práctica <span aria-hidden="true">→</span></a></div>` : tab === 'notes' ? notesPanel(lesson.id) : activity(lesson.id)}</section>${guide(lesson)}</div><footer class="lesson-footer"><a class="button ghost" href="${lesson.id > 1 ? `#lesson/${lesson.id - 1}/read` : '#'}">← ${lesson.id > 1 ? 'Clase anterior' : 'Mis cursos'}</a><a class="button ${isComplete(lesson.id) ? 'primary' : ''}" href="${isComplete(lesson.id) ? lesson.id < 12 ? `#lesson/${lesson.id + 1}/read` : '#' : `#lesson/${lesson.id}/practice`}">${isComplete(lesson.id) ? lesson.id < 12 ? 'Siguiente clase' : 'Volver a mis cursos' : 'Abrir la práctica'} <span aria-hidden="true">→</span></a></footer></div></div>`, 'home', true);
+    return frame(`<div class="lesson-shell"><nav class="syllabus" aria-label="Clases del curso"><a class="back-link" href="#course/${course.id}">← Volver al curso</a><p class="eyebrow">Tu recorrido</p><h2>${escape(course.title)}</h2><p class="subtle">${courseProgress(course)} de ${course.classes.length} completadas</p><div class="progress-track" aria-hidden="true"><div class="progress-fill" style="width:${courseProgress(course) / course.classes.length * 100}%"></div></div>${course.classes.map((id, i) => `<a href="#lesson/${id}/read" class="${id === lesson.id ? 'active' : ''}" ${id === lesson.id ? 'aria-current="step"' : ''}><span class="step-dot">${isComplete(id) ? '✓' : i + 1}</span><span>${escape(lessons[id - 1].title)}</span></a>`).join('')}</nav><div class="lesson-main"><select class="mobile-course-picker" aria-label="Cambiar de clase">${options}</select><header class="lesson-heading"><p class="eyebrow">${escape(course.label)} · Clase ${localIndex + 1} de ${course.classes.length}</p><h1>${escape(lesson.title)}</h1><p class="lesson-objective">${escape(lesson.objective)}</p><div class="lesson-tools"><span>◷ ${lesson.duration} minutos estimados</span><span>${isComplete(lesson.id) ? '✓ Práctica completada' : 'A tu ritmo'}</span></div></header><div class="lesson-tabs" role="tablist" aria-label="Contenido de la clase">${tabs.map(([id, label]) => `<button role="tab" id="tab-${id}" aria-selected="${id === tab}" aria-controls="lesson-panel" data-tab="${id}" tabindex="${id === tab ? '0' : '-1'}">${label}</button>`).join('')}</div><div class="lesson-columns"><section class="lesson-content" id="lesson-panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === 'read' ? `<div class="listen-lesson"><button class="button small" data-action="voice-lesson" ${narrator.supported ? '' : 'disabled'}>Escuchar la explicación</button><span>El texto completo está debajo.</span></div><div class="prose">${markdown(lesson.content)}</div><div class="button-row"><a class="button primary" href="#lesson/${lesson.id}/practice">Ir a la práctica <span aria-hidden="true">→</span></a></div>` : tab === 'notes' ? notesPanel(lesson.id) : activity(lesson.id)}</section>${guide(lesson)}</div><footer class="lesson-footer"><a class="button ghost" href="${lesson.id > 1 ? `#lesson/${lesson.id - 1}/read` : '#'}">← ${lesson.id > 1 ? 'Clase anterior' : 'Mis cursos'}</a><a class="button ${isComplete(lesson.id) ? 'primary' : ''}" href="${isComplete(lesson.id) ? lesson.id < 12 ? `#lesson/${lesson.id + 1}/read` : '#' : `#lesson/${lesson.id}/practice`}">${isComplete(lesson.id) ? lesson.id < 12 ? 'Siguiente clase' : 'Volver a mis cursos' : 'Abrir la práctica'} <span aria-hidden="true">→</span></a></footer></div></div>`, 'home', true);
   }
 
   function field(name, label, value = '', placeholder = '', type = 'textarea') {
@@ -201,12 +287,15 @@
   }
 
   function settingsPage() {
-    return frame(`<div class="settings"><p class="eyebrow">A tu manera</p><h1 class="page-title">Preferencias.</h1><section class="settings-block"><h2>Tu acompañante</h2><p>La ayuda de Tu guía está escrita para cada clase. Podés elegir cómo verla.</p><label class="settings-toggle"><input type="checkbox" name="guideVisible" ${state.guideVisible ? 'checked' : ''}> Mostrar el acompañante en las clases</label><label class="settings-toggle"><input type="checkbox" name="reduceMotion" ${state.reduceMotion ? 'checked' : ''}> Reducir el movimiento de las animaciones</label></section><section class="settings-block"><h2>Tu progreso</h2><p>Las notas, respuestas y consultas de prueba se guardan en el navegador de este dispositivo. Podés descargar una copia en Mis apuntes.</p><div class="button-row"><a class="button" href="#notes">Ver mis entregas →</a><button class="button ghost" data-action="reset-prompt">Reiniciar la prueba</button></div><div id="reset-confirm" hidden><p>Se borrarán las notas, el avance y las consultas de este navegador. Descargá tus entregas si querés conservarlas.</p><div class="button-row"><button class="button" data-action="reset-confirm">Confirmar reinicio</button><button class="button ghost" data-action="reset-cancel">Cancelar</button></div></div></section><section class="settings-block"><h2>Sobre esta prueba</h2><p>Aula y el señalador animado son propuestas de identidad para revisar. Los casos de los comercios y sus ofertas son ficticios.</p><p>Las prácticas de formulario, página y clasificación se realizan dentro del aula. En los apuntes también están los pasos para aplicarlas con herramientas externas.</p></section></div>`, 'settings');
+    return frame(`<div class="settings"><p class="eyebrow">A tu manera</p><h1 class="page-title">Preferencias.</h1><section class="settings-block"><h2>Tu acompañante</h2><p>Tu guía puede saludarte, explicar y acompañar las prácticas con voz. Podés elegir entre solo voz y solo texto.</p><label class="settings-toggle"><input type="checkbox" name="guideVisible" ${state.guideVisible ? 'checked' : ''}> Mostrar el acompañante en las clases</label><label class="settings-toggle"><input type="checkbox" name="voiceEnabled" ${state.voiceEnabled ? 'checked' : ''} ${narrator.supported ? '' : 'disabled'}> Acompañamiento por voz</label><label class="field" for="voice-choice">Voz en español<select id="voice-choice" name="voiceURI"><option value="">Automática en español</option></select></label><label class="field">Velocidad de la voz<select name="voiceRate"><option value="0.85" ${Number(state.voiceRate) === 0.85 ? 'selected' : ''}>Más pausada</option><option value="0.96" ${Number(state.voiceRate) === 0.96 ? 'selected' : ''}>Normal</option><option value="1.1" ${Number(state.voiceRate) === 1.1 ? 'selected' : ''}>Más rápida</option></select></label><button class="button small" data-action="voice-sample" ${narrator.supported ? '' : 'disabled'}>Probar esta voz</button><p>La voz usa las opciones en español disponibles en tu navegador y dispositivo.</p><label class="settings-toggle"><input type="checkbox" name="reduceMotion" ${state.reduceMotion ? 'checked' : ''}> Reducir el movimiento de las animaciones</label></section><section class="settings-block"><h2>Tu progreso</h2><p>Las notas, respuestas y consultas de prueba se guardan en el navegador de este dispositivo. Podés descargar una copia en Mis apuntes.</p><div class="button-row"><a class="button" href="#notes">Ver mis entregas →</a><button class="button ghost" data-action="reset-prompt">Reiniciar la prueba</button></div><div id="reset-confirm" hidden><p>Se borrarán las notas, el avance y las consultas de este navegador. Descargá tus entregas si querés conservarlas.</p><div class="button-row"><button class="button" data-action="reset-confirm">Confirmar reinicio</button><button class="button ghost" data-action="reset-cancel">Cancelar</button></div></div></section><section class="settings-block"><h2>Sobre esta prueba</h2><p>Aula y el personaje docente son propuestas de identidad para revisar. Los casos de los comercios y sus ofertas son ficticios.</p><p>Las prácticas de formulario, página y clasificación se realizan dentro del aula. En los apuntes también están los pasos para aplicarlas con herramientas externas.</p></section></div>`, 'settings');
   }
 
   function render() {
+    const previousRoute = route;
     const parts = location.hash.replace(/^#\/?/, '').split('/');
     route = { page: parts[0] || 'home', id: Number(parts[1]), tab: ['read', 'practice', 'notes'].includes(parts[2]) ? parts[2] : 'read' };
+    const routeChanged = previousRoute && (previousRoute.page !== route.page || previousRoute.id !== route.id || previousRoute.tab !== route.tab);
+    if (routeChanged) narrator.stop();
     document.body.classList.toggle('reduce-motion', Boolean(state.reduceMotion));
     if (route.page === 'lesson' && lessons[route.id - 1]) {
       state.lastLesson = route.id; save();
@@ -218,6 +307,12 @@
     } else {
       root.innerHTML = route.page === 'notes' ? notesPage() : route.page === 'settings' ? settingsPage() : home();
       document.title = 'Aula · Aprendé para tu negocio';
+    }
+    updateAudioControls();
+    updateVoiceOptions();
+    if (routeChanged && route.page === 'lesson' && route.tab !== 'notes' && state.guideVisible && state.guideOpen) {
+      const lesson = lessons[route.id - 1];
+      if (lesson) say(`${route.tab === 'practice' ? 'Vamos a practicar.' : `Vamos con ${lesson.title}.`} ${lesson.guidance[0]}`, 'hello');
     }
   }
 
@@ -231,12 +326,15 @@
 
   function say(message, gesture = 'hint') {
     const node = $('#guide-message');
+    if (route.page === 'lesson') guideMessages[route.id] = message;
     if (node) node.textContent = message;
     animate(gesture);
+    if (state.guideVisible && state.guideOpen) speakText(message);
   }
 
   function showFeedback(form, text, success = true) {
     form.querySelector('.form-feedback').innerHTML = `<p class="feedback ${success ? '' : 'error'}" role="${success ? 'status' : 'alert'}">${escape(text)}</p>`;
+    say(text, success ? 'success' : 'hint');
   }
 
   function complete(id, message) {
@@ -244,7 +342,7 @@
     save();
     render();
     toast(message || 'Práctica completada. Tu trabajo quedó guardado.');
-    say('Tu práctica quedó guardada. Podés seguir a la próxima clase o volver a revisar tu entrega.', 'success');
+    say('Tu práctica quedó guardada. Ya avanzaste un paso más. Podés seguir a la próxima clase o volver a revisar tu entrega.', 'success');
   }
 
   function validateWorkshop(form) {
@@ -283,8 +381,20 @@
   root.addEventListener('change', event => {
     const input = event.target;
     if (input.classList.contains('mobile-course-picker')) { location.hash = `lesson/${input.value}/read`; return; }
+    if (input.name === 'voiceEnabled') {
+      if (input.checked) enableVoice('Hola, soy Tu guía. Vamos a avanzar paso a paso. Podés silenciarme para leer la ayuda en texto.');
+      else textOnly();
+      return;
+    }
+    if (input.name === 'voiceURI' || input.name === 'voiceRate') {
+      narrator.stop();
+      state[input.name] = input.name === 'voiceRate' ? Number(input.value) : input.value;
+      save();
+      return;
+    }
     if (['guideVisible', 'reduceMotion'].includes(input.name)) {
       state[input.name] = input.checked; save(); document.body.classList.toggle('reduce-motion', Boolean(state.reduceMotion));
+      if (input.name === 'guideVisible' && !input.checked) narrator.stop();
     }
     if (input.dataset.query) { const row = state.queries.find(row => row.id === input.dataset.query); if (row) { row.status = input.value; save(); } }
     if (route.page === 'lesson' && input.name && input.tagName === 'SELECT') { state.drafts[route.id] = { ...draft(route.id), [input.name]: input.value }; save(); }
@@ -310,8 +420,20 @@
     const button = event.target.closest('[data-action]');
     if (!button) return;
     const action = button.dataset.action;
-    if (action === 'toggle-guide') {
+    if (action === 'voice-toggle') {
+      if (state.voiceEnabled && voiceReady) textOnly();
+      else enableVoice();
+    } else if (action === 'voice-start') { enableVoice(); }
+    else if (action === 'voice-text') { textOnly(); }
+    else if (action === 'voice-stop') { narrator.stop(); }
+    else if (action === 'voice-repeat') { enableVoice($('#guide-message')?.textContent); }
+    else if (action === 'voice-sample') { enableVoice('Hola, soy Tu guía. Vamos a avanzar paso a paso. Si algo se complica, lo revisamos con un ejemplo. Podés volver a escucharme o elegir la ayuda en texto.'); }
+    else if (action === 'voice-lesson') {
+      const text = $('.prose')?.innerText;
+      if (text) enableVoice(`${lessons[route.id - 1].title}. ${text}`);
+    } else if (action === 'toggle-guide') {
       state.guideOpen = !state.guideOpen; save();
+      if (!state.guideOpen) narrator.stop();
       $('#guide-body').hidden = !state.guideOpen;
       button.setAttribute('aria-expanded', String(state.guideOpen));
       button.setAttribute('aria-label', state.guideOpen ? 'Cerrar ayuda' : 'Abrir ayuda');
@@ -355,7 +477,7 @@
     } else if (action === 'export') { exportWork(); }
     else if (action === 'reset-prompt') { $('#reset-confirm').hidden = false; }
     else if (action === 'reset-cancel') { $('#reset-confirm').hidden = true; }
-    else if (action === 'reset-confirm') { state = load(true); save(); location.hash = ''; render(); toast('La prueba está lista para empezar de nuevo.'); }
+    else if (action === 'reset-confirm') { narrator.stop(); voiceReady = false; state = load(true); save(); location.hash = ''; render(); toast('La prueba está lista para empezar de nuevo.'); }
   });
 
   root.addEventListener('submit', event => {
@@ -402,5 +524,9 @@
     if (fromTab) $(`[data-tab="${route.tab}"]`)?.focus();
     else { window.scrollTo(0, 0); const heading = $('#main h1'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); } }
   });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) narrator.stop();
+  });
+  window.addEventListener('pagehide', () => narrator.stop());
   render();
 })();
