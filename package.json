@@ -1,0 +1,11 @@
+{
+  "name": "aula-piloto-mercedes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aula de prueba con cursos digitales para comercios y un acompañante animado",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "sync-content": "node scripts/sync-content.mjs",
+    "check": "node --check dist/app.js && node --check dist/content.js"
+  }
+}
